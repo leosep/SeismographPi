@@ -1,0 +1,4 @@
+Flask
+SQLAlchemy
+Adafruit-ADS1x15
+Flask-Migrate
