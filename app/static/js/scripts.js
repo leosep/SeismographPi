@@ -1,96 +1,121 @@
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     var ctx = document.getElementById('geophoneCanvas').getContext('2d');
+    var alertBanner = document.getElementById('alertBanner');
+    var eventsList = document.getElementById('eventsList');
 
-    if (ctx) {
-        var chart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [],  // Will be populated with timestamps
-                datasets: [{
-                    label: 'Geophone Data',
-                    data: [],  // Will be populated with values
-                    borderColor: 'rgba(75, 192, 192, 1)',
-                    borderWidth: 1,
-                    fill: false
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    x: {
-                        type: 'time',  // Assuming timestamps are in date format
-                        time: {
-                            unit: 'second',  // Adjust as per your data granularity
-                            tooltipFormat: 'll HH:mm:ss',  // Adjust tooltip format as needed
-                            displayFormats: {
-                                second: 'HH:mm:ss',
-                                minute: 'HH:mm',
-                                hour: 'HH:mm',
-                                day: 'MMM D',
-                                week: 'll',
-                                month: 'MMM YYYY',
-                                quarter: '[Q]Q - YYYY',
-                                year: 'YYYY'
-                            },
-                        },
-                        ticks: {
-                            source: 'data'
-                        }
-                    },
-                    y: {
-                        type: 'linear',
-                        position: 'left'
-                    }
-                }
-            }
-        });
-
-        // Function to fetch data from the server and update the chart
-        function fetchData() {
-            fetch('/data')
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Fetched data:', data); // Debug log
-                    // Ensure data format is correct
-                    if (data && data.timestamps && data.values) {
-                        // Convert timestamps to Date objects
-                        chart.data.labels = data.timestamps.map(timestamp => new Date(timestamp));
-                        chart.data.datasets[0].data = data.values.map(value => Number(value));  // Convert values to numbers
-                        chart.update(); // Update chart with new data
-
-                        // Call function to save geophone data
-                        saveGeophoneData(data.timestamps, data.values);
-                    } else {
-                        console.error('Data format is incorrect:', data);
-                    }
-                })
-                .catch(error => console.error('Error fetching data:', error));
-        }
-
-        // Function to save geophone data to the server
-        function saveGeophoneData(timestamps, values) {
-            fetch('/save_geophone_data', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    timestamps: timestamps,
-                    values: values
-                })
-            })
-            .then(response => {
-                if (!response.ok) {
-                    console.error('Failed to save geophone data:', response);
-                }
-            })
-            .catch(error => console.error('Error saving geophone data:', error));
-        }
-
-        // Fetch data initially and then at regular intervals
-        fetchData();
-        setInterval(fetchData, 1000);  // Fetch data every second
-    } else {
+    if (!ctx) {
         console.error('Failed to get canvas context');
+        return;
     }
+
+    var chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Geophone Data',
+                data: [],
+                borderColor: 'rgba(75, 192, 192, 1)',
+                borderWidth: 1,
+                pointRadius: 0,  // 100 Hz of points renders much faster without dots
+                fill: false
+            }]
+        },
+        options: {
+            responsive: true,
+            animation: false,  // disable animation: redraws every second at high
+                                // sample rates look choppy otherwise
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit: 'second',
+                        tooltipFormat: 'HH:mm:ss.SSS',
+                        displayFormats: {
+                            second: 'HH:mm:ss',
+                            minute: 'HH:mm',
+                            hour: 'HH:mm'
+                        },
+                    },
+                    ticks: { source: 'data' }
+                },
+                y: { type: 'linear', position: 'left' }
+            }
+        }
+    });
+
+    // --- Chart data polling -------------------------------------------------
+    // This only reads data the acquisition daemon already saved; it no
+    // longer triggers sensor reads or writes anything (that was removed:
+    // having the browser's poll loop be responsible for sampling meant
+    // data acquisition stopped whenever the tab was closed).
+    function fetchChartData() {
+        fetch('/data')
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
+                if (data && data.timestamps && data.values) {
+                    chart.data.labels = data.timestamps.map(function (t) { return new Date(t); });
+                    chart.data.datasets[0].data = data.values.map(Number);
+                    chart.update();
+                } else {
+                    console.error('Data format is incorrect:', data);
+                }
+            })
+            .catch(function (error) { console.error('Error fetching data:', error); });
+    }
+
+    // --- P-wave alerts via Server-Sent Events -------------------------------
+    function addEventToList(evt) {
+        if (!eventsList) return;
+        var li = document.createElement('li');
+        var t = new Date(evt.triggered_at).toLocaleTimeString();
+        li.textContent = t + ' — ratio ' + evt.peak_ratio.toFixed(2) +
+            ' — peak ' + evt.peak_value;
+        eventsList.prepend(li);
+    }
+
+    function showAlert(evt) {
+        if (!alertBanner) return;
+        alertBanner.textContent = 'P-wave detected at ' +
+            new Date(evt.triggered_at).toLocaleTimeString() +
+            ' (ratio ' + evt.peak_ratio.toFixed(2) + ')';
+        alertBanner.classList.add('visible');
+        clearTimeout(showAlert._hideTimer);
+        showAlert._hideTimer = setTimeout(function () {
+            alertBanner.classList.remove('visible');
+        }, 8000);
+    }
+
+    function connectEventStream() {
+        var source = new EventSource('/events/stream');
+
+        source.onmessage = function (e) {
+            try {
+                var evt = JSON.parse(e.data);
+                showAlert(evt);
+                addEventToList(evt);
+            } catch (err) {
+                // Keep-alive comments arrive as empty messages; ignore parse errors.
+            }
+        };
+
+        source.onerror = function () {
+            // EventSource auto-reconnects on its own; this just logs visibility
+            // into connection drops (e.g. daemon or Flask restart).
+            console.warn('SSE connection lost, browser will retry automatically.');
+        };
+    }
+
+    // Load recent event history once on page load (so a refresh doesn't
+    // lose context of what already happened).
+    fetch('/events')
+        .then(function (r) { return r.json(); })
+        .then(function (events) {
+            events.slice().reverse().forEach(addEventToList);
+        })
+        .catch(function (err) { console.error('Error loading event history:', err); });
+
+    fetchChartData();
+    setInterval(fetchChartData, 1000);
+    connectEventStream();
 });

@@ -1,0 +1,17 @@
+[Unit]
+Description=Geophone acquisition daemon (ADC sampling + STA/LTA P-wave detection)
+After=network.target
+
+[Service]
+Type=simple
+# Adjust to wherever you clone the repo on the Pi:
+WorkingDirectory=/home/pi/SeismographPi
+ExecStart=/usr/bin/python3 -m acquisition.daemon
+Restart=on-failure
+RestartSec=5
+# The I2C bus needs the daemon to run as a user in the 'i2c' group
+# (or root). Adjust User= to whichever account has I2C access:
+User=pi
+
+[Install]
+WantedBy=multi-user.target

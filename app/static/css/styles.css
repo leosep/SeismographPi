@@ -10,3 +10,29 @@ canvas {
     display: block;
     margin: 0 auto;
 }
+
+.alert-banner {
+    max-width: 800px;
+    margin: 0 auto 16px auto;
+    padding: 0;
+    height: 0;
+    overflow: hidden;
+    background: #c62828;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.alert-banner.visible {
+    height: auto;
+    padding: 12px;
+}
+
+#eventsList {
+    max-width: 800px;
+    margin: 0 auto;
+    font-family: monospace;
+}
+
